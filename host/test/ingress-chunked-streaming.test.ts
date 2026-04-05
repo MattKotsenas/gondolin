@@ -8,6 +8,7 @@ import { MemoryProvider } from "../src/vfs/node/index.ts";
 
 class CaptureDuplex extends Duplex {
   readonly written: Buffer[] = [];
+  private requestComplete = false;
 
   _read(_size: number) {
     // driven by push() from the test
@@ -19,6 +20,17 @@ class CaptureDuplex extends Duplex {
     cb: (error?: Error | null) => void,
   ) {
     this.written.push(Buffer.from(chunk));
+    if (!this.requestComplete) {
+      const all = Buffer.concat(this.written).toString("ascii");
+      if (all.includes("\r\n\r\n")) {
+        const afterHeaders = all.slice(all.indexOf("\r\n\r\n") + 4);
+        const isChunked = /transfer-encoding:\s*chunked/i.test(all);
+        if (!isChunked || afterHeaders.endsWith("0\r\n\r\n")) {
+          this.requestComplete = true;
+          this.emit("request_complete");
+        }
+      }
+    }
     cb();
   }
 }
@@ -71,7 +83,7 @@ test("IngressGateway: streams chunked response without buffering whole chunk", a
   const sandbox = {
     openIngressStream: async () => {
       upstream = new CaptureDuplex();
-      upstream.once("finish", () => {
+      upstream.once("request_complete", () => {
         // Chunk size = 0x10 = 16, but only send 10 bytes first.
         upstream!.push(
           "HTTP/1.1 200 OK\r\n" +
