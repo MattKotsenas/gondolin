@@ -970,10 +970,11 @@ export function resolveSandboxServerOptions(
     options.qemuPath === undefined &&
     guestFromManifest !== null
   ) {
-    qemuPath =
+    const archBinary =
       guestFromManifest.arch === "arm64"
         ? "qemu-system-aarch64"
         : "qemu-system-x86_64";
+    qemuPath = resolveDefaultQemuPath(archBinary);
   }
 
   if (vmm === "qemu") {
