@@ -296,6 +296,24 @@ test("sandbox-controller: selectMachineType avoids microvm for x64 tcg", () => {
   assert.equal(selectMachineType("arm64", "tcg"), "virt");
 });
 
+test("sandbox-controller: buildQemuArgs uses rng-builtin", () => {
+  const args = (__test as any).buildQemuArgs(makeConfig());
+  const objectIdx = args.indexOf("-object");
+  assert.notEqual(objectIdx, -1, "expected -object flag in QEMU args");
+  assert.equal(
+    args[objectIdx + 1],
+    "rng-builtin,id=rng0",
+    "expected rng-builtin backend (no host dependency)",
+  );
+  // Ensure no reference to /dev/urandom
+  const allArgs = args.join(" ");
+  assert.equal(
+    allArgs.includes("/dev/urandom"),
+    false,
+    "rng-random with /dev/urandom should not appear",
+  );
+});
+
 test("sandbox-controller: killActiveChildren kills tracked processes", async () => {
   const child = new FakeChildProcess();
   mock.method(cp, "spawn", () => child as any);

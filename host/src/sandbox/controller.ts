@@ -366,7 +366,7 @@ function buildQemuArgs(config: SandboxConfig) {
   const serialDev = useMmio ? "virtio-serial-device" : "virtio-serial-pci";
   const netDev = useMmio ? "virtio-net-device" : "virtio-net-pci";
 
-  args.push("-object", "rng-random,filename=/dev/urandom,id=rng0");
+  args.push("-object", "rng-builtin,id=rng0");
   args.push("-device", `${rngDev},rng=rng0`);
   args.push(
     "-chardev",
