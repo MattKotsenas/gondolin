@@ -5,9 +5,9 @@
 import path from "path";
 import { VM } from "../src/vm/core.ts";
 
-const imgDir = "C:\\Projects\\gondolin\\.cache\\test-image";
+const imgDir = "C:\\Projects\\gondolin\\.cache\\dotnet-image";
 
-console.log("Creating VM with local image...");
+console.log("Creating VM with custom dotnet image...");
 console.log(`  Image: ${imgDir}`);
 console.log(`  Platform: ${process.platform}`);
 
@@ -19,20 +19,15 @@ try {
         initrdPath: path.join(imgDir, "initramfs.cpio.lz4"),
         rootfsPath: path.join(imgDir, "rootfs.ext4"),
       },
-      memory: "512M",
+      memory: "4G",
       cpus: 2,
       console: "none",
     },
   });
 
-  console.log("VM created. QEMU path:", (vm as any).resolvedSandboxOptions?.qemuPath ?? "unknown");
-  console.log("Endpoints:", JSON.stringify({
-    virtio: (vm as any).resolvedSandboxOptions?.virtioEndpoint,
-    net: (vm as any).resolvedSandboxOptions?.netEndpoint,
-  }));
-  console.log("Running exec...");
+  console.log("VM created. Running exec...");
 
-  const result = await vm.exec('echo "Hello World from Gondolin on Windows!"');
+  const result = await vm.exec('echo "Hello World from Gondolin on Windows!" && dotnet --version');
 
   console.log(`\n=== E2E RESULT ===`);
   console.log(`Exit code: ${result.exitCode}`);
@@ -43,7 +38,7 @@ try {
     result.exitCode === 0 &&
     result.stdout.includes("Hello World from Gondolin on Windows!")
   ) {
-    console.log("\n✅ E2E PASSED: echo Hello World from Windows micro-VM!");
+    console.log("\n✅ E2E PASSED: Hello World + dotnet from Windows micro-VM!");
   } else {
     console.log("\n❌ E2E FAILED: unexpected output");
     process.exitCode = 1;
