@@ -218,6 +218,8 @@ export type { TcpOptions } from "./tcp.ts";
 export type QemuNetworkOptions = {
   /** unix socket path for the qemu net backend */
   socketPath: string;
+  /** pre-bound TCP server (Windows) - if set, socketPath is ignored */
+  preBoundServer?: net.Server;
   /** gateway ipv4 address */
   gatewayIP?: string;
   /** guest ipv4 address */
@@ -448,6 +450,18 @@ export class QemuNetworkBackend extends EventEmitter {
   start() {
     if (this.server) return;
 
+    if (this.options.preBoundServer) {
+      // TCP: server is already listening (Windows)
+      this.server = this.options.preBoundServer;
+      this.server.on("connection", (socket: net.Socket) => {
+        socket.setNoDelay(true);
+        this.attachSocket(socket);
+      });
+      this.server.on("error", (err) => this.emit("error", err));
+      return;
+    }
+
+    // UDS: create and bind (Unix)
     if (!fs.existsSync(path.dirname(this.options.socketPath))) {
       fs.mkdirSync(path.dirname(this.options.socketPath), { recursive: true });
     }

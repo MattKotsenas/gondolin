@@ -1,4 +1,5 @@
 import fs from "fs";
+import net from "net";
 import os from "os";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -6,7 +7,11 @@ import { execFileSync } from "child_process";
 import { createRequire } from "module";
 
 import { getHostNodeArchCached } from "../host/arch.ts";
-import { shouldUseTcp } from "../ipc-endpoint.ts";
+import {
+  type IpcEndpoint,
+  shouldUseTcp,
+  bindTcpEndpoint,
+} from "../ipc-endpoint.ts";
 import {
   debugFlagsToArray,
   parseDebugEnv,
@@ -249,6 +254,20 @@ export type ResolvedSandboxServerOptions = {
   netEnabled: boolean;
   /** whether to allow WebSocket upgrades for guest egress */
   allowWebSockets: boolean;
+
+  /** IPC endpoints for QEMU chardevs/netdev (TCP on Windows, absent on Unix) */
+  virtioEndpoint?: IpcEndpoint;
+  virtioFsEndpoint?: IpcEndpoint;
+  virtioSshEndpoint?: IpcEndpoint;
+  virtioIngressEndpoint?: IpcEndpoint;
+  netEndpoint?: IpcEndpoint;
+
+  /** pre-bound TCP servers for QEMU to connect to (Windows only) */
+  virtioServer?: net.Server;
+  virtioFsServer?: net.Server;
+  virtioSshServer?: net.Server;
+  virtioIngressServer?: net.Server;
+  netServer?: net.Server;
 
   /** enabled debug components */
   debug: DebugFlag[];
@@ -1058,22 +1077,48 @@ export function resolveSandboxServerOptions(
 export async function resolveSandboxServerOptionsAsync(
   options: SandboxServerOptions = {},
 ): Promise<ResolvedSandboxServerOptions> {
+  let resolved: ResolvedSandboxServerOptions;
+
   // Explicit object imagePath is already fully resolved.
   if (options.imagePath && typeof options.imagePath === "object") {
-    return resolveSandboxServerOptions(options);
-  }
-
-  // String image selectors may require pulling from the builtin registry.
-  if (typeof options.imagePath === "string") {
+    resolved = resolveSandboxServerOptions(options);
+  } else if (typeof options.imagePath === "string") {
+    // String image selectors may require pulling from the builtin registry.
     const resolvedImage = await ensureImageSelector(options.imagePath);
-    return resolveSandboxServerOptions({
+    resolved = resolveSandboxServerOptions({
       ...options,
       imagePath: resolvedImage.assetDir,
     });
+  } else {
+    const assets = await ensureGuestAssets();
+    resolved = resolveSandboxServerOptions(options, assets);
   }
 
-  const assets = await ensureGuestAssets();
-  return resolveSandboxServerOptions(options, assets);
+  // On Windows, bind TCP servers for all IPC channels since UDS is not
+  // available from Node.js.
+  if (shouldUseTcp()) {
+    const [virtio, virtioFs, virtioSsh, virtioIngress, netdev] =
+      await Promise.all([
+        bindTcpEndpoint(),
+        bindTcpEndpoint(),
+        bindTcpEndpoint(),
+        bindTcpEndpoint(),
+        bindTcpEndpoint(),
+      ]);
+
+    resolved.virtioEndpoint = virtio.endpoint;
+    resolved.virtioServer = virtio.server;
+    resolved.virtioFsEndpoint = virtioFs.endpoint;
+    resolved.virtioFsServer = virtioFs.server;
+    resolved.virtioSshEndpoint = virtioSsh.endpoint;
+    resolved.virtioSshServer = virtioSsh.server;
+    resolved.virtioIngressEndpoint = virtioIngress.endpoint;
+    resolved.virtioIngressServer = virtioIngress.server;
+    resolved.netEndpoint = netdev.endpoint;
+    resolved.netServer = netdev.server;
+  }
+
+  return resolved;
 }
 
 export const __test = {
