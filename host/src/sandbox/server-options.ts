@@ -6,6 +6,7 @@ import { execFileSync } from "child_process";
 import { createRequire } from "module";
 
 import { getHostNodeArchCached } from "../host/arch.ts";
+import { shouldUseTcp } from "../ipc-endpoint.ts";
 import {
   debugFlagsToArray,
   parseDebugEnv,
@@ -51,6 +52,46 @@ const DEFAULT_MAX_STDIN_BYTES = 64 * 1024;
 const DEFAULT_MAX_QUEUED_STDIN_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_QUEUED_STDIN_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_QUEUED_EXECS = 64;
+
+/** well-known QEMU installation paths on Windows */
+const WINDOWS_QEMU_DIRS = [
+  path.join(process.env.ProgramFiles ?? "C:\\Program Files", "qemu"),
+  path.join(
+    process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+    "qemu",
+  ),
+];
+
+/**
+ * Resolve the default QEMU binary path for the current platform.
+ *
+ * On Unix the binary name (e.g. `qemu-system-x86_64`) is returned as-is and
+ * expected to be in PATH. On Windows the binary is not typically on PATH, so
+ * we probe well-known installation directories.
+ */
+function resolveDefaultQemuPath(binaryName: string): string {
+  if (process.platform !== "win32") {
+    return binaryName;
+  }
+
+  // On Windows, append .exe and search well-known directories
+  const exeName = binaryName.endsWith(".exe")
+    ? binaryName
+    : `${binaryName}.exe`;
+
+  for (const dir of WINDOWS_QEMU_DIRS) {
+    const candidate = path.join(dir, exeName);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // not found here, try next
+    }
+  }
+
+  // Fall back to bare name and hope it's on PATH
+  return exeName;
+}
 
 /**
  * sandbox server options
@@ -848,7 +889,7 @@ export function resolveSandboxServerOptions(
   }
   const envVmm = normalizeVmm(process.env.GONDOLIN_VMM);
   const vmm = explicitVmm ?? envVmm ?? "qemu";
-  let qemuPath = options.qemuPath ?? defaultQemuForHostArch;
+  let qemuPath = options.qemuPath ?? resolveDefaultQemuPath(defaultQemuForHostArch);
   const resolveDefaultKrunRunnerPathFn =
     deps.resolveDefaultKrunRunnerPath ?? resolveDefaultKrunRunnerPath;
   const krunRunnerPath =
@@ -1039,4 +1080,5 @@ export const __test = {
   probeKrunRunnerCandidate,
   resolvePackagedKrunRunnerPath,
   resolveDefaultKrunRunnerPath,
+  resolveDefaultQemuPath,
 };
