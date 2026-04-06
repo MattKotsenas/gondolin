@@ -385,6 +385,45 @@ jobs:
           # Enable VM/QEMU logs to help diagnose boot/hang issues in CI.
           GONDOLIN_DEBUG: "net"
 
+  test-windows:
+    name: Test (Windows)
+    needs: [check]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck
+        run: pnpm --filter @earendil-works/gondolin exec tsc --noEmit
+
+      - name: Build
+        run: pnpm --filter @earendil-works/gondolin run build
+
+      - name: Install QEMU
+        run: |
+          choco install qemu --yes --no-progress
+          echo "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Verify QEMU
+        run: qemu-system-x86_64 --version
+
+      - name: Run unit tests (no VM)
+        timeout-minutes: 5
+        run: |
+          cd host
+          node --test test/sandbox-controller.test.ts test/ipc-endpoint.test.ts test/qemu-discovery.test.ts test/ingress-*.test.ts test/dns-*.test.ts test/http-*.test.ts
+
   # Optional: Publish preview package for PRs (uses trusted publishing)
   # Uncomment to enable publishing test versions from PRs
   # publish-preview:
