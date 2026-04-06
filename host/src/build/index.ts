@@ -37,6 +37,12 @@ function shouldUseContainer(config: BuildConfig): boolean {
     return false;
   }
 
+  // Windows cannot run native Linux build tools (cpio, lz4, mke2fs, apk).
+  // Always delegate to a container build.
+  if (process.platform === "win32") {
+    return true;
+  }
+
   if (hasPostBuildCommands(config) && process.platform !== "linux") {
     return true;
   }
