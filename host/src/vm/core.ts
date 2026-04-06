@@ -1334,15 +1334,18 @@ fi
       this.ensureStartupGeneration(startupGeneration);
     }
 
-    const { socketPath } = registerSession({
+    const registration = registerSession({
       id: this.id,
       label: this.sessionLabel,
     });
+    const sessionTarget = registration.socketPath ?? registration.endpoint;
 
     let sessionIpc: SessionIpcServer | null = null;
     try {
       sessionIpc = new SessionIpcServer(
-        socketPath,
+        // On Unix: UDS path string. On Windows (future): pre-bound TCP server.
+        // TODO: pass pre-bound TCP server when TCP session IPC is wired up.
+        sessionTarget as string,
         (onMessage, onClose) => {
           const server = this.server;
           if (!server) {
