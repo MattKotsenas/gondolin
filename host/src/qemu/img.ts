@@ -4,6 +4,33 @@ import os from "os";
 import path from "path";
 import { randomUUID } from "crypto";
 
+/** well-known QEMU installation paths on Windows */
+const WINDOWS_QEMU_DIRS = [
+  path.join(process.env.ProgramFiles ?? "C:\\Program Files", "qemu"),
+  path.join(
+    process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+    "qemu",
+  ),
+];
+
+/** resolve qemu-img binary path (discovers it on Windows) */
+function resolveQemuImg(): string {
+  if (process.platform !== "win32") return "qemu-img";
+
+  for (const dir of WINDOWS_QEMU_DIRS) {
+    const candidate = path.join(dir, "qemu-img.exe");
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // not found
+    }
+  }
+  return "qemu-img.exe";
+}
+
+const QEMU_IMG = resolveQemuImg();
+
 type Qcow2CreateOptions = {
   /** overlay file path */
   path: string;
@@ -21,7 +48,7 @@ function tmpDir(): string {
 
 /** Ensure `qemu-img` can be invoked. */
 export function ensureQemuImgAvailable(): void {
-  execFileSync("qemu-img", ["--version"], { stdio: "ignore" });
+  execFileSync(QEMU_IMG, ["--version"], { stdio: "ignore" });
 }
 
 export function inferDiskFormatFromPath(diskPath: string): "raw" | "qcow2" {
@@ -38,7 +65,7 @@ function createQcow2Overlay(opts: Qcow2CreateOptions): void {
   fs.rmSync(opts.path, { force: true });
 
   execFileSync(
-    "qemu-img",
+    QEMU_IMG,
     [
       "create",
       "-f",
@@ -85,7 +112,7 @@ export function moveFile(src: string, dst: string): void {
 type QemuImgInfo = Record<string, unknown>;
 
 function qemuImgInfoJson(imagePath: string): QemuImgInfo {
-  const raw = execFileSync("qemu-img", ["info", "--output=json", imagePath], {
+  const raw = execFileSync(QEMU_IMG, ["info", "--output=json", imagePath], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -138,5 +165,5 @@ export function rebaseQcow2InPlace(
     args.push("-u");
   }
   args.push("-F", backingFormat, "-b", backingPath, imagePath);
-  execFileSync("qemu-img", args, { stdio: "ignore" });
+  execFileSync(QEMU_IMG, args, { stdio: "ignore" });
 }
