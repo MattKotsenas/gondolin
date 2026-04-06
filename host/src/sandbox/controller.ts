@@ -483,6 +483,12 @@ function selectAccel(targetArch: string) {
   }
 
   if (process.platform === "darwin") return "hvf";
+
+  // Windows: WHPX is available when the Windows Hypervisor Platform feature
+  // is enabled (implied by WSL2/Hyper-V being active). Fall back to tcg if
+  // WHPX is not available at runtime (QEMU will report the error).
+  if (process.platform === "win32") return "whpx";
+
   return "tcg";
 }
 
@@ -505,6 +511,8 @@ function selectCpu(targetArch: string, accel?: string) {
     return accelName === "hvf" ? "host" : "max";
   }
 
+  // WHPX does not reliably support "-cpu host"; use "max" for best
+  // compatibility across Intel and AMD processors.
   return "max";
 }
 

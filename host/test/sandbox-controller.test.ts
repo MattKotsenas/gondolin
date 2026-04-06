@@ -294,6 +294,16 @@ test("sandbox-controller: selectMachineType avoids microvm for x64 tcg", () => {
   }
 
   assert.equal(selectMachineType("arm64", "tcg"), "virt");
+
+  // WHPX never uses microvm (Windows has no MMIO virtio support)
+  assert.equal(selectMachineType("x64", "whpx"), "q35");
+});
+
+test("sandbox-controller: selectCpu uses max for whpx", () => {
+  const hostArch = process.arch === "arm64" ? "arm64" : "x64";
+
+  // WHPX does not support -cpu host
+  assert.equal((__test as any).selectCpu(hostArch, "whpx"), "max");
 });
 
 test("sandbox-controller: buildQemuArgs uses rng-builtin", () => {
