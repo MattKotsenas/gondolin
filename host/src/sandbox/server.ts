@@ -389,6 +389,14 @@ export class SandboxServer extends EventEmitter {
         cpu: this.options.cpu,
         console: this.options.console,
         autoRestart: this.options.autoRestart,
+        // Thread TCP endpoints through for Windows
+        virtioEndpoint: this.options.virtioEndpoint,
+        virtioFsEndpoint: this.options.virtioFsEndpoint,
+        virtioSshEndpoint: this.options.virtioSshEndpoint,
+        virtioIngressEndpoint: this.options.virtioIngressEndpoint,
+        netEndpoint: this.options.netEnabled
+          ? this.options.netEndpoint
+          : undefined,
       };
       this.controller = new SandboxController(sandboxConfig);
     }
@@ -402,8 +410,9 @@ export class SandboxServer extends EventEmitter {
       (this.options.maxStdinBytes ?? DEFAULT_MAX_STDIN_BYTES) * 2,
     );
 
+    // On Windows, use pre-bound TCP servers; on Unix, use socket paths.
     this.bridge = new VirtioBridge(
-      this.options.virtioSocketPath,
+      this.options.virtioServer ?? this.options.virtioSocketPath,
       maxPendingBytes,
     );
     this.bridge.onWritable = () => {
@@ -411,15 +420,17 @@ export class SandboxServer extends EventEmitter {
       this.scheduleExecIoFlush();
       this.flushBridgeWritableWaiters();
     };
-    this.fsBridge = new VirtioBridge(this.options.virtioFsSocketPath);
+    this.fsBridge = new VirtioBridge(
+      this.options.virtioFsServer ?? this.options.virtioFsSocketPath,
+    );
     // SSH/tcp-forward stream can be long-lived and high-throughput; allow a larger queue.
     this.sshBridge = new VirtioBridge(
-      this.options.virtioSshSocketPath,
+      this.options.virtioSshServer ?? this.options.virtioSshSocketPath,
       Math.max(maxPendingBytes, 64 * 1024 * 1024),
     );
     // Ingress proxy streams can also be long-lived and high-throughput.
     this.ingressBridge = new VirtioBridge(
-      this.options.virtioIngressSocketPath,
+      this.options.virtioIngressServer ?? this.options.virtioIngressSocketPath,
       Math.max(maxPendingBytes, 64 * 1024 * 1024),
     );
     this.fsService = this.vfsProvider
@@ -436,6 +447,7 @@ export class SandboxServer extends EventEmitter {
     this.network = this.options.netEnabled
       ? new QemuNetworkBackend({
           socketPath: this.options.netSocketPath,
+          preBoundServer: this.options.netServer,
           vmMac: mac,
           debug: this.hasDebug("net"),
           fetch: this.options.fetch,
