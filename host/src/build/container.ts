@@ -220,11 +220,13 @@ set -eu
 # Minimal build toolchain
 apk add --no-cache nodejs zig lz4 cpio e2fsprogs bash
 
-# Keep Zig caches on the writable /work mount. This avoids permission issues
-# with rootless container bind mounts (for example Podman + user namespaces).
-mkdir -p /work/zig-cache/local /work/zig-cache/global
-export ZIG_LOCAL_CACHE_DIR=/work/zig-cache/local
-export ZIG_GLOBAL_CACHE_DIR=/work/zig-cache/global
+# Keep Zig caches off any NTFS bind mounts. On Windows hosts, the /work mount
+# is NTFS where Zig's atomic renames fail; use a container-local tmpdir instead.
+# On Linux/macOS hosts the /work mount is native and works fine, but using /tmp
+# is harmless and consistent.
+mkdir -p /tmp/zig-cache/local /tmp/zig-cache/global
+export ZIG_LOCAL_CACHE_DIR=/tmp/zig-cache/local
+export ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache/global
 
 # Make guest sources discoverable for Zig compilation
 export GONDOLIN_GUEST_SRC=/guest
