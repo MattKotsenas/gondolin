@@ -314,6 +314,57 @@ test("sandbox-controller: buildQemuArgs uses rng-builtin", () => {
   );
 });
 
+test("sandbox-controller: buildQemuArgs uses TCP endpoints when provided", () => {
+  const args = (__test as any).buildQemuArgs(
+    makeConfig({
+      virtioEndpoint: { type: "tcp", host: "127.0.0.1", port: 10001 },
+      virtioFsEndpoint: { type: "tcp", host: "127.0.0.1", port: 10002 },
+      virtioSshEndpoint: { type: "tcp", host: "127.0.0.1", port: 10003 },
+      virtioIngressEndpoint: { type: "tcp", host: "127.0.0.1", port: 10004 },
+      netSocketPath: "ignored",
+      netEndpoint: { type: "tcp", host: "127.0.0.1", port: 10005 },
+    }),
+  );
+
+  const allArgs = args.join(" ");
+
+  // Chardevs should use TCP host:port syntax
+  assert.ok(
+    allArgs.includes("host=127.0.0.1,port=10001"),
+    "virtio chardev should use TCP",
+  );
+  assert.ok(
+    allArgs.includes("host=127.0.0.1,port=10002"),
+    "virtiofs chardev should use TCP",
+  );
+  assert.ok(
+    allArgs.includes("host=127.0.0.1,port=10003"),
+    "virtiossh chardev should use TCP",
+  );
+  assert.ok(
+    allArgs.includes("host=127.0.0.1,port=10004"),
+    "ingress chardev should use TCP",
+  );
+
+  // Netdev should use TCP inet syntax
+  assert.ok(
+    allArgs.includes("addr.type=inet,addr.host=127.0.0.1,addr.port=10005"),
+    "netdev should use TCP inet",
+  );
+
+  // Should NOT contain any unix socket paths
+  assert.equal(
+    allArgs.includes("addr.type=unix"),
+    false,
+    "no unix addr when TCP endpoints provided",
+  );
+  assert.equal(
+    allArgs.includes("/tmp/virtio.sock"),
+    false,
+    "unix path should not appear in chardev when TCP endpoint overrides it",
+  );
+});
+
 test("sandbox-controller: killActiveChildren kills tracked processes", async () => {
   const child = new FakeChildProcess();
   mock.method(cp, "spawn", () => child as any);

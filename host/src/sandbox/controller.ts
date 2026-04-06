@@ -3,6 +3,13 @@ import child_process from "child_process";
 import type { ChildProcess } from "child_process";
 import fs from "fs";
 
+import {
+  type IpcEndpoint,
+  unixEndpoint,
+  formatChardevSocket,
+  formatNetdevStream,
+} from "../ipc-endpoint.ts";
+
 const activeChildren = new Set<ChildProcess>();
 let exitHookRegistered = false;
 
@@ -84,6 +91,17 @@ export type SandboxConfig = {
   netMac?: string;
   /** whether to restart the vm automatically on exit */
   autoRestart: boolean;
+
+  /** override endpoint for virtio-serial control (TCP on Windows) */
+  virtioEndpoint?: IpcEndpoint;
+  /** override endpoint for virtiofs/vfs (TCP on Windows) */
+  virtioFsEndpoint?: IpcEndpoint;
+  /** override endpoint for virtio-serial ssh (TCP on Windows) */
+  virtioSshEndpoint?: IpcEndpoint;
+  /** override endpoint for virtio-serial ingress (TCP on Windows) */
+  virtioIngressEndpoint?: IpcEndpoint;
+  /** override endpoint for network backend (TCP on Windows) */
+  netEndpoint?: IpcEndpoint;
 };
 
 export type SandboxState = "starting" | "running" | "stopped";
@@ -368,21 +386,25 @@ function buildQemuArgs(config: SandboxConfig) {
 
   args.push("-object", "rng-builtin,id=rng0");
   args.push("-device", `${rngDev},rng=rng0`);
+
+  // Resolve IPC endpoints: prefer explicit endpoint overrides, fall back to
+  // unix endpoints derived from the legacy socket path fields.
+  const virtioEp =
+    config.virtioEndpoint ?? unixEndpoint(config.virtioSocketPath);
+  const virtioFsEp =
+    config.virtioFsEndpoint ?? unixEndpoint(config.virtioFsSocketPath);
+  const virtioSshEp =
+    config.virtioSshEndpoint ?? unixEndpoint(config.virtioSshSocketPath);
+  const virtioIngressEp =
+    config.virtioIngressEndpoint ??
+    unixEndpoint(config.virtioIngressSocketPath);
+
+  args.push("-chardev", formatChardevSocket("virtiocon0", virtioEp));
+  args.push("-chardev", formatChardevSocket("virtiofs0", virtioFsEp));
+  args.push("-chardev", formatChardevSocket("virtiossh0", virtioSshEp));
   args.push(
     "-chardev",
-    `socket,id=virtiocon0,path=${config.virtioSocketPath},server=off`,
-  );
-  args.push(
-    "-chardev",
-    `socket,id=virtiofs0,path=${config.virtioFsSocketPath},server=off`,
-  );
-  args.push(
-    "-chardev",
-    `socket,id=virtiossh0,path=${config.virtioSshSocketPath},server=off`,
-  );
-  args.push(
-    "-chardev",
-    `socket,id=virtioingress0,path=${config.virtioIngressSocketPath},server=off`,
+    formatChardevSocket("virtioingress0", virtioIngressEp),
   );
 
   args.push("-device", `${serialDev},id=virtio-serial0`);
@@ -403,11 +425,10 @@ function buildQemuArgs(config: SandboxConfig) {
     "virtserialport,chardev=virtioingress0,name=virtio-ingress,bus=virtio-serial0.0",
   );
 
-  if (config.netSocketPath) {
-    args.push(
-      "-netdev",
-      `stream,id=net0,server=off,addr.type=unix,addr.path=${config.netSocketPath}`,
-    );
+  if (config.netSocketPath || config.netEndpoint) {
+    const netEp =
+      config.netEndpoint ?? unixEndpoint(config.netSocketPath!);
+    args.push("-netdev", formatNetdevStream("net0", netEp));
     const mac = config.netMac ?? "02:00:00:00:00:01";
     args.push("-device", `${netDev},netdev=net0,mac=${mac}`);
   }
