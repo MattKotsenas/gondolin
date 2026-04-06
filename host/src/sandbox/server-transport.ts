@@ -10,6 +10,8 @@ import {
   encodeFrame,
 } from "./virtio-protocol.ts";
 
+import type { IpcEndpoint } from "../ipc-endpoint.ts";
+
 export const MAX_REQUEST_ID = 0xffffffff;
 
 export class VirtioBridge {
@@ -22,11 +24,28 @@ export class VirtioBridge {
   private waitingDrain = false;
   private allowReconnect = true;
   private closed = false;
-  private readonly socketPath: string;
+  private readonly socketPath: string | undefined;
+  private readonly preBoundServer: net.Server | undefined;
+  private readonly ownsServer: boolean;
   private readonly maxPendingBytes: number;
 
-  constructor(socketPath: string, maxPendingBytes: number = 8 * 1024 * 1024) {
-    this.socketPath = socketPath;
+  /**
+   * Create a VirtioBridge.
+   *
+   * @param target - UDS path string, or a pre-bound TCP net.Server (for Windows)
+   * @param maxPendingBytes - max queued outbound bytes before dropping
+   */
+  constructor(
+    target: string | net.Server,
+    maxPendingBytes: number = 8 * 1024 * 1024,
+  ) {
+    if (typeof target === "string") {
+      this.socketPath = target;
+      this.ownsServer = true;
+    } else {
+      this.preBoundServer = target;
+      this.ownsServer = false;
+    }
     this.maxPendingBytes = maxPendingBytes;
   }
 
@@ -34,10 +53,25 @@ export class VirtioBridge {
     if (this.closed) return;
     if (this.server) return;
     this.allowReconnect = true;
-    if (!fs.existsSync(path.dirname(this.socketPath))) {
-      fs.mkdirSync(path.dirname(this.socketPath), { recursive: true });
+
+    if (this.preBoundServer) {
+      // TCP: server is already listening, just wire up connection handling
+      this.server = this.preBoundServer;
+      this.server.on("connection", (socket: net.Socket) => {
+        socket.setNoDelay(true);
+        this.attachSocket(socket);
+      });
+      this.server.on("error", (err) => {
+        this.onError?.(err);
+      });
+      return;
     }
-    fs.rmSync(this.socketPath, { force: true });
+
+    // UDS: create and bind a new server
+    if (!fs.existsSync(path.dirname(this.socketPath!))) {
+      fs.mkdirSync(path.dirname(this.socketPath!), { recursive: true });
+    }
+    fs.rmSync(this.socketPath!, { force: true });
 
     const server = net.createServer((socket) => {
       this.attachSocket(socket);
@@ -54,7 +88,7 @@ export class VirtioBridge {
       this.scheduleReconnect();
     });
 
-    server.listen(this.socketPath);
+    server.listen(this.socketPath!);
   }
 
   async disconnect(): Promise<void> {
@@ -78,7 +112,9 @@ export class VirtioBridge {
       this.socket = null;
     }
 
-    if (this.server) {
+    // Only close the server if we own it (UDS). Pre-bound TCP servers are
+    // owned by the caller and closed separately.
+    if (this.server && this.ownsServer) {
       const server = this.server;
       this.server = null;
       await new Promise<void>((resolve) => {
@@ -88,6 +124,8 @@ export class VirtioBridge {
           resolve();
         }
       });
+    } else {
+      this.server = null;
     }
 
     this.waitingDrain = false;
