@@ -830,13 +830,19 @@ export type IpcClientCallbacks = {
 
 /** connect to an external session IPC socket */
 export function connectToSession(
-  sockPath: string,
+  target: string | IpcEndpoint,
   callbacks: IpcClientCallbacks,
 ): {
   send: (message: ClientMessage) => void;
   close: () => void;
 } {
-  const socket = net.createConnection({ path: sockPath });
+  const connectOpts =
+    typeof target === "string"
+      ? { path: target }
+      : target.type === "unix"
+        ? { path: target.path }
+        : { host: target.host, port: target.port };
+  const socket = net.createConnection(connectOpts);
   socket.setNoDelay(true);
 
   let closed = false;
