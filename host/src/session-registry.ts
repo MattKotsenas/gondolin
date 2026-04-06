@@ -18,6 +18,7 @@ import {
   type SnapshotResponseMessage,
   type StdinCommandMessage,
 } from "./sandbox/control-protocol.ts";
+import { type IpcEndpoint, shouldUseTcp } from "./ipc-endpoint.ts";
 
 const CACHE_BASE =
   process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache");
@@ -35,8 +36,10 @@ export type SessionInfo = {
   id: string;
   /** host process pid */
   pid: number;
-  /** unix socket path for IPC */
-  socketPath: string;
+  /** unix socket path for IPC (Unix platforms) */
+  socketPath?: string;
+  /** TCP endpoint for IPC (Windows) */
+  endpoint?: IpcEndpoint;
   /** iso 8601 creation timestamp */
   createdAt: string;
   /** human-readable label */
@@ -97,15 +100,73 @@ function isSocketAlive(sockPath: string, timeoutMs = 500): Promise<boolean> {
   });
 }
 
+function isEndpointAlive(
+  endpoint: IpcEndpoint,
+  timeoutMs = 500,
+): Promise<boolean> {
+  if (endpoint.type === "unix") {
+    return isSocketAlive(endpoint.path, timeoutMs);
+  }
+  return new Promise((resolve) => {
+    const socket = net.createConnection({
+      host: endpoint.host,
+      port: endpoint.port,
+    });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, timeoutMs);
+
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(true);
+    });
+
+    socket.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+/** resolve the IPC endpoint from session metadata */
+function sessionEndpoint(info: SessionInfo): IpcEndpoint | null {
+  if (info.endpoint) return info.endpoint;
+  if (info.socketPath) return { type: "unix", path: info.socketPath };
+  return null;
+}
+
 /** register a live session */
-export function registerSession(options: { id: string; label?: string }): {
-  socketPath: string;
+export function registerSession(options: {
+  id: string;
+  label?: string;
+  /** pre-bound TCP endpoint (Windows) */
+  endpoint?: IpcEndpoint;
+}): {
+  socketPath: string | undefined;
+  endpoint: IpcEndpoint;
   metadataPath: string;
 } {
   ensureSessionsDir();
 
-  const sockPath = socketPath(options.id);
   const metaPath = metadataPath(options.id);
+
+  if (options.endpoint) {
+    // TCP endpoint (Windows) - no socket file
+    const info: SessionInfo = {
+      id: options.id,
+      pid: process.pid,
+      endpoint: options.endpoint,
+      createdAt: new Date().toISOString(),
+      label: options.label,
+    };
+    fs.writeFileSync(metaPath, JSON.stringify(info, null, 2) + "\n");
+    return { socketPath: undefined, endpoint: options.endpoint, metadataPath: metaPath };
+  }
+
+  // UDS (Unix platforms) - existing behavior
+  const sockPath = socketPath(options.id);
 
   const info: SessionInfo = {
     id: options.id,
@@ -116,7 +177,11 @@ export function registerSession(options: { id: string; label?: string }): {
   };
 
   fs.writeFileSync(metaPath, JSON.stringify(info, null, 2) + "\n");
-  return { socketPath: sockPath, metadataPath: metaPath };
+  return {
+    socketPath: sockPath,
+    endpoint: { type: "unix", path: sockPath },
+    metadataPath: metaPath,
+  };
 }
 
 /** unregister a session */
@@ -154,12 +219,13 @@ export async function listSessions(): Promise<SessionEntry[]> {
 
     try {
       const info = JSON.parse(fs.readFileSync(filePath, "utf8")) as SessionInfo;
-      if (!info.id || !Number.isInteger(info.pid) || !info.socketPath) {
+      const ep = sessionEndpoint(info);
+      if (!info.id || !Number.isInteger(info.pid) || !ep) {
         continue;
       }
 
       const pidAlive = isPidAlive(info.pid);
-      const sockAlive = pidAlive ? await isSocketAlive(info.socketPath) : false;
+      const sockAlive = pidAlive ? await isEndpointAlive(ep) : false;
 
       entries.push({ ...info, alive: pidAlive && sockAlive });
     } catch {
@@ -195,7 +261,8 @@ export async function gcSessions(): Promise<number> {
 
     try {
       const info = JSON.parse(fs.readFileSync(filePath, "utf8")) as SessionInfo;
-      if (!info.id || !Number.isInteger(info.pid) || !info.socketPath) {
+      const ep = sessionEndpoint(info);
+      if (!info.id || !Number.isInteger(info.pid) || !ep) {
         staleIds.add(file.replace(/\.json$/, ""));
         continue;
       }
@@ -207,7 +274,7 @@ export async function gcSessions(): Promise<number> {
         continue;
       }
 
-      const alive = await isSocketAlive(info.socketPath);
+      const alive = await isEndpointAlive(ep);
       if (!alive) {
         staleIds.add(info.id);
       }
@@ -319,7 +386,9 @@ export class SessionIpcServer {
   private clients = new Set<net.Socket>();
   private allocatedInternalIds = new Set<number>();
   private nextInternalId = 0xffffffff;
-  private readonly sockPath: string;
+  private readonly sockPath: string | undefined;
+  private readonly preBoundServer: net.Server | undefined;
+  private readonly ownsServer: boolean;
   private readonly connectToSandbox: (
     onMessage: (data: Buffer | string, isBinary: boolean) => void,
     onClose?: () => void,
@@ -327,14 +396,20 @@ export class SessionIpcServer {
   private readonly handlers: SessionIpcServerHandlers;
 
   constructor(
-    sockPath: string,
+    target: string | net.Server,
     connectToSandbox: (
       onMessage: (data: Buffer | string, isBinary: boolean) => void,
       onClose?: () => void,
     ) => SandboxConnection,
     handlers: SessionIpcServerHandlers = {},
   ) {
-    this.sockPath = sockPath;
+    if (typeof target === "string") {
+      this.sockPath = target;
+      this.ownsServer = true;
+    } else {
+      this.preBoundServer = target;
+      this.ownsServer = false;
+    }
     this.connectToSandbox = connectToSandbox;
     this.handlers = handlers;
   }
@@ -342,8 +417,19 @@ export class SessionIpcServer {
   start(): void {
     if (this.server) return;
 
+    if (this.preBoundServer) {
+      // TCP: server is already listening
+      this.server = this.preBoundServer;
+      this.server.on("connection", (socket: net.Socket) => {
+        socket.setNoDelay(true);
+        this.handleConnection(socket);
+      });
+      return;
+    }
+
+    // UDS: create and bind
     try {
-      fs.rmSync(this.sockPath, { force: true });
+      fs.rmSync(this.sockPath!, { force: true });
     } catch {
       // ignore
     }
@@ -356,7 +442,7 @@ export class SessionIpcServer {
       // ignore
     });
 
-    server.listen(this.sockPath);
+    server.listen(this.sockPath!);
     this.server = server;
   }
 
@@ -370,16 +456,22 @@ export class SessionIpcServer {
     }
     this.clients.clear();
 
-    if (this.server) {
+    // Only close server if we own it (UDS). Pre-bound TCP servers are
+    // owned by the caller.
+    if (this.server && this.ownsServer) {
       const server = this.server;
       this.server = null;
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    } else {
+      this.server = null;
     }
 
-    try {
-      fs.rmSync(this.sockPath, { force: true });
-    } catch {
-      // ignore
+    if (this.sockPath) {
+      try {
+        fs.rmSync(this.sockPath, { force: true });
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -738,13 +830,19 @@ export type IpcClientCallbacks = {
 
 /** connect to an external session IPC socket */
 export function connectToSession(
-  sockPath: string,
+  target: string | IpcEndpoint,
   callbacks: IpcClientCallbacks,
 ): {
   send: (message: ClientMessage) => void;
   close: () => void;
 } {
-  const socket = net.createConnection({ path: sockPath });
+  const connectOpts =
+    typeof target === "string"
+      ? { path: target }
+      : target.type === "unix"
+        ? { path: target.path }
+        : { host: target.host, port: target.port };
+  const socket = net.createConnection(connectOpts);
   socket.setNoDelay(true);
 
   let closed = false;

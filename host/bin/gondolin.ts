@@ -2004,7 +2004,7 @@ async function runAttach(argv: string[]) {
     },
   );
 
-  const client = connectToSession(session.socketPath, {
+  const client = connectToSession(session.endpoint ?? session.socketPath!, {
     onJson(message: ServerMessage) {
       if (message.type === "status") {
         return;
@@ -2238,7 +2238,7 @@ async function runSnapshot(argv: string[]) {
     },
   );
 
-  const client = connectToSession(session.socketPath, {
+  const client = connectToSession(session.endpoint ?? session.socketPath!, {
     onJson(message: ServerMessage) {
       if (message.type === "status") {
         return;
