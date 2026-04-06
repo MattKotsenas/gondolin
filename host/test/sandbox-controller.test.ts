@@ -299,11 +299,11 @@ test("sandbox-controller: selectMachineType avoids microvm for x64 tcg", () => {
   assert.equal(selectMachineType("x64", "whpx"), "q35");
 });
 
-test("sandbox-controller: selectCpu uses max for whpx", () => {
+test("sandbox-controller: selectCpu uses qemu64 for whpx", () => {
   const hostArch = process.arch === "arm64" ? "arm64" : "x64";
 
-  // WHPX does not support -cpu host
-  assert.equal((__test as any).selectCpu(hostArch, "whpx"), "max");
+  // WHPX needs qemu64 (not host, not max - max causes VP exit code 4)
+  assert.equal((__test as any).selectCpu(hostArch, "whpx"), "qemu64");
 });
 
 test("sandbox-controller: buildQemuArgs uses rng-builtin", () => {

@@ -511,8 +511,13 @@ function selectCpu(targetArch: string, accel?: string) {
     return accelName === "hvf" ? "host" : "max";
   }
 
-  // WHPX does not reliably support "-cpu host"; use "max" for best
-  // compatibility across Intel and AMD processors.
+  // WHPX does not support "-cpu host" and "-cpu max" can trigger
+  // "Unexpected VP exit code 4" on some configurations.
+  // Use "qemu64" for reliable WHPX operation.
+  if (process.platform === "win32") {
+    return accelName === "whpx" ? "qemu64" : "max";
+  }
+
   return "max";
 }
 
