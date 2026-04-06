@@ -74,9 +74,11 @@ Gondolin uses `GONDOLIN_DEFAULT_IMAGE` (default: `alpine-base:latest`).
 
 Requirements:
 
-| macOS                    | Linux (Debian/Ubuntu)                         |
-| ------------------------ | --------------------------------------------- |
-| `brew install qemu node` | `sudo apt install qemu-system-arm nodejs npm` |
+| macOS                    | Linux (Debian/Ubuntu)                         | Windows                                          |
+| ------------------------ | --------------------------------------------- | ------------------------------------------------ |
+| `brew install qemu node` | `sudo apt install qemu-system-arm nodejs npm` | `winget install SoftwareFreedomConservancy.QEMU`  |
+
+Windows requires [Windows Hypervisor Platform](https://learn.microsoft.com/en-us/virtualization/api/) for hardware acceleration (WHPX). This is enabled automatically when Hyper-V or WSL2 is active. Without it, QEMU falls back to software emulation (TCG).
 
 Optional experimental libkrun backend setup:
 
@@ -111,7 +113,8 @@ When `vmm=krun` is selected, Gondolin requires krun boot assets from the selecte
 image manifest (`assets.krunKernel` and optional `assets.krunInitrd`).
 For custom kernels/initrds, provide an explicit `sandbox.imagePath` asset object.
 
-> Linux and macOS are supported. ARM64 is the most tested runtime path today.
+> Linux, macOS, and Windows are supported. ARM64 is the most tested runtime path today.
+> Windows support uses QEMU with WHPX acceleration and TCP sockets.
 > Linux x86_64 `make krun-runner` is covered by CI smoke builds.
 
 ## Feature Highlights

@@ -7,6 +7,27 @@ Gondolin supports two VM backends:
 
 This page is the authoritative backend-parity reference for SDK/CLI behavior.
 
+## Platform Support
+
+### QEMU acceleration by platform
+
+| Platform        | Accelerator | CPU       | Machine  | Notes                                    |
+| --------------- | ----------- | --------- | -------- | ---------------------------------------- |
+| Linux (KVM)     | `kvm`       | `host`    | `microvm`| Best performance on x86_64               |
+| Linux (no KVM)  | `tcg`       | `max`     | `q35`    | Software emulation fallback              |
+| macOS           | `hvf`       | `host`    | `virt`   | Hypervisor.framework                     |
+| Windows (WHPX)  | `whpx`      | `qemu64`  | `q35`    | Requires Hyper-V/WSL2 enabled            |
+| Windows (no WHPX)| `tcg`      | `max`     | `q35`    | Software emulation fallback              |
+
+### Windows-specific notes
+
+- QEMU is installed via `winget install SoftwareFreedomConservancy.QEMU`
+- On Windows, Gondolin uses **TCP sockets** instead of Unix domain sockets for
+  host-guest communication (chardevs, netdev, session IPC)
+- WHPX uses `-cpu qemu64` because `-cpu max` triggers QEMU VP exit code 4
+- The `krun` backend is not supported on Windows
+- Image builds require Docker/Podman (same as other platforms)
+
 ## Feature Parity Matrix
 
 | Capability / setting                                           | `qemu` | `krun` | Notes                                                                                                                        |
