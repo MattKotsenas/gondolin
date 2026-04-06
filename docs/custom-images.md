@@ -62,7 +62,20 @@ Building custom images requires the following tools:
 | **cpio** | Creating initramfs archives |
 | **lz4** | Initramfs compression |
 | **e2fsprogs** | Creating/extending ext4 rootfs images (mke2fs, debugfs) |
-| **Docker or Podman** *(optional)* | Pull/export OCI rootfs images (`oci.image`) |
+| **Docker or Podman** *(optional on Linux)* | Pull/export OCI rootfs images (`oci.image`) |
+
+> On **Windows** and **macOS** (cross-arch), Gondolin automatically delegates to
+> a Docker/Podman container build. You don't need cpio, lz4, or e2fsprogs
+> installed locally - only **Docker** (or Podman) is required. Zig is also
+> handled inside the container.
+
+### Windows
+
+```powershell
+# Docker Desktop must be running (with Linux containers)
+# No other build tools needed - everything runs inside a container
+gondolin build --config build-config.json --output ./my-assets
+```
 
 ### macOS
 
@@ -264,8 +277,12 @@ Notes:
 
 ### Container Configuration
 
-Used for the *build environment* (e.g., building Linux images on macOS).
+Used for the *build environment* (e.g., building Linux images on macOS or Windows).
 This is separate from `oci`, which controls the guest rootfs source.
+
+On **Windows**, all builds automatically use the container path. On **macOS**,
+cross-architecture builds and builds with `postBuild.commands` use containers.
+On **Linux**, you can force container usage with `container.force = true`.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
